@@ -1,0 +1,391 @@
+Shingles
+
+def generate_shingles(sentence, k=8):
+    shingles = set()
+    words = sentence.split()
+
+    for i in range(len(words) - k + 1):
+        shingles.add(' '.join(words[i:i+k]))
+
+    return shingles
+
+# Generating shingles for the example sentences
+shingles1 = generate_shingles(f1)
+shingles2 = generate_shingles(f2)
+shingles3 = generate_shingles(f3)
+
+
+Min hashing
+
+vocabulary = sorted(set.union(shingles1, shingles2, shingles3))
+
+# One-hot coding
+def one_hot_encoding(shingles, vocabulary):
+    encoding = [1 if shingle in shingles else 0 for shingle in vocabulary]
+    return encoding
+
+# Generating one-hot encoding for the example sentences
+encoding1 = one_hot_encoding(shingles1, vocabulary)
+encoding2 = one_hot_encoding(shingles2, vocabulary)
+encoding3 = one_hot_encoding(shingles3, vocabulary)
+
+num_permutations = 8
+max_shingle_id = len(vocabulary)
+next_prime = 4294967311
+
+# Random coefficients for hashing
+coefficients = random.sample(range(1, max_shingle_id + 1), num_permutations)
+def minhash_signature(encoding, coefficients):
+    signature = []
+    for coeff in coefficients:
+        min_hash = float('inf')
+        for index, value in enumerate(encoding):
+            if value == 1:
+                hash_code = (coeff * (index + 1)) % next_prime
+                if hash_code < min_hash:
+                    min_hash = hash_code
+        signature.append(min_hash)
+    return signature
+
+# Generating minhash signatures for the example sentences
+signature1 = minhash_signature(encoding1, coefficients)
+signature2 = minhash_signature(encoding2, coefficients)
+signature3 = minhash_signature(encoding3, coefficients)
+Jacard similarity
+
+def jaccard_similarity(set1, set2):
+  intersection = len(set1.intersection(set2))
+  union = len(set1.union(set2))
+  return intersection / union
+
+# Calculating Jaccard similarity between original shingles
+similarity_original = jaccard_similarity(shingles1, shingles2)
+# Calculating Jaccard similarity between minhash signatures
+similarity_signatures = jaccard_similarity(set(signature1), set(signature2))
+
+print("Jaccard similarity between original shingles:", similarity_original)
+print("Jaccard similarity between minhash signatures:", similarity_signatures)
+LSH
+
+# Step 6: Create LSH buckets with Jaccard Similarity
+def lsh_buckets_with_similarity(signatures, b, r, threshold=0.3):
+    original_buckets = {}
+    for i, sig in enumerate(signatures):
+        for j in range(0, len(sig), r):
+            band = set(sig[j:j + r])  # Convert the band to a set of shingles
+            band_str = str(band)
+            if band_str in original_buckets:
+                original_buckets[band_str].append((i, band))
+            else:
+                original_buckets[band_str] = [(i, band)]
+    return original_buckets
+
+# ... (previous code remains unchanged)
+
+# Step 8: Using the Updated LSH Buckets to Show Similarity Based on Similar Pairs
+def filter_buckets_with_similarity(original_buckets, threshold=0.3):
+    filtered_buckets = {}
+    for key, values in original_buckets.items():
+        if len(values) > 1:
+            for i in range(len(values)):
+                for j in range(i + 1, len(values)):
+                    idx1, band1 = values[i]
+                    idx2, band2 = values[j]
+                    sim = jaccard_similarity(band1, band2)
+                    if sim >= threshold:
+                        if key in filtered_buckets:
+                            filtered_buckets[key].append((idx1, idx2, band1, band2, sim))
+                        else:
+                            filtered_buckets[key] = [(idx1, idx2, band1, band2, sim)]
+    return filtered_buckets
+
+# Execute Step 6
+original_buckets = lsh_buckets_with_similarity(signatures, b, r, threshold=0.3)
+
+# Display original buckets
+print("Original Buckets:")
+for key, values in original_buckets.items():
+    print(f"Band: {key}, Documents: {values}")
+
+# Execute Step 8
+filtered_buckets = filter_buckets_with_similarity(original_buckets, threshold=0.3)
+
+# Display filtered buckets with Jaccard Similarity
+print("\nFiltered Buckets with Jaccard Similarity:")
+for key, values in filtered_buckets.items():
+    print(f"\nBand: {key}")
+    for pair in values:
+        idx1, idx2 = pair[0], pair[1]
+        print(f"Similarity between documents {idx1} and {idx2}: {pair[4]}")
+
+Google matrix
+#!/usr/bin/env python3
+
+import sys
+
+def create_google_matrix(matrix):
+    google_matrix = {}
+    alpha = 0.85  # Damping factor
+
+    for node in matrix:
+        pagerank, neighbors = matrix[node]
+        num_neighbors = len(neighbors)
+
+        # Calculate the self-contribution
+        self_contribution = pagerank / (num_neighbors + 1)
+
+        # Calculate the normalized contribution to neighbors
+        neighbor_contribution = alpha * pagerank / (num_neighbors + 1)
+
+        # Update the Google matrix
+        google_matrix[node] = (self_contribution, neighbor_contribution, neighbors)
+
+    return google_matrix
+
+def reducer():
+    matrix = {}
+    contributions = {}
+
+    # Input comes from STDIN
+    for line in sys.stdin:
+        # Parse the input from the mapper
+        node_id, pagerank, neighbors = line.strip().split('\t')
+        pagerank = float(pagerank)
+        neighbors = neighbors.strip().split(',')  # Convert string representation to a list
+
+        matrix[node_id] = (pagerank, neighbors)
+
+        if neighbors != ['0']:
+            # Use a more nuanced contribution mechanism
+            contribution = pagerank / (len(neighbors) + 1)  # Include self-contribution
+            for neighbor in neighbors:
+                contributions.setdefault(neighbor, []).append(contribution)
+
+    # Perform matrix-vector multiplication using the Google matrix
+    google_matrix = create_google_matrix(matrix)
+    for node in matrix:
+        pagerank, neighbors = matrix[node]
+        self_contribution, neighbor_contribution, _ = google_matrix[node]
+
+        # Calculate the new PageRank
+        new_rank = self_contribution + sum(neighbor_contribution * contributions.get(neighbor, [0])[0] for neighbor in neighbors)
+
+        # Print the new PageRank
+        print(f"{node}\t{new_rank}\t{','.join(neighbors)}")
+
+if __name__ == "__main__":
+    reducer() Page rank
+
+#!/usr/bin/env python3
+
+import sys
+
+def reducer():
+    matrix = {}
+    contributions = {}
+
+    # Input comes from STDIN
+    for line in sys.stdin:
+        # Parse the input from the mapper
+        node_id, pagerank, neighbors = line.strip().split('\t')
+        pagerank = float(pagerank)
+        neighbors = neighbors.strip().split(',')  # Convert string representation to a list
+
+        matrix[node_id] = (pagerank, neighbors)
+
+        if neighbors != ['0']:
+            # Use a more nuanced contribution mechanism
+            contribution = pagerank / (len(neighbors) + 1)  # Include self-contribution
+            for neighbor in neighbors:
+                contributions.setdefault(neighbor, []).append(contribution)
+
+    # Perform matrix-vector multiplication using the transition matrix (contributions)
+    for node in matrix:
+        pagerank, neighbors = matrix[node]
+        new_rank = 0.15 + 0.85 * sum(contributions.get(neighbor, [0])[0] for neighbor in neighbors)
+
+        # Print the new PageRank
+        print(f"{node}\t{new_rank}\t{','.join(neighbors)}")
+
+if __name__ == "__main__":
+    reducer()
+Association
+
+Mapper
+#!/usr/bin/env python3
+
+import sys
+import itertools
+
+# Initialize item count dictionary
+itemset_counts = {}
+# Read input and count occurrences of each itemset
+for line in sys.stdin:
+    itemset, count = line.strip().split('\t')
+    itemset_counts[itemset] = int(count)
+
+# Output all possible subsets of each itemset
+for itemset, count in itemset_counts.items():
+    items = itemset.split()
+    for i in range(1, len(items)):
+        for subset in itertools.combinations(items, i):
+            remaining_items = set(items) - set(subset)
+            remaining_items_str = ' '.join(sorted(list(remaining_items)))
+            print(f"{', '.join(sorted(list(subset)))} => {remaining_items_str}\t{count}")
+
+
+reducer
+
+#!/usr/bin/env python3
+
+import sys
+
+threshold=0.5
+# Initialize itemset count dictionary
+itemset_support = {}
+itemset_counts = {}
+
+# Read input and aggregate counts
+for line in sys.stdin:
+    rule, count = line.strip().split('\t')
+    itemset_counts[rule] = itemset_counts.get(rule, 0) + int(count)
+
+
+# Extract individual itemsets from the rule
+    antecedent, consequent = rule.split('=>')
+    antecedent = frozenset(antecedent.split(','))
+    consequent = frozenset(consequent.split(','))
+
+    # Update support counts for individual itemsets
+    itemset_support[antecedent] = itemset_support.get(antecedent, 0) + int(count)
+    itemset_support[consequent] = itemset_support.get(consequent, 0) + int(count)
+
+# Compute and output confidence scores
+for rule, count in itemset_counts.items():
+    antecedent, consequent = rule.split('=>')
+    antecedent = frozenset(antecedent.split(','))
+    consequent = frozenset(consequent.split(','))
+
+    # Compute confidence score
+    confidence = count / itemset_support[antecedent]
+
+    if confidence>=threshold:
+         # Output the rule and its confidence score
+         print(f"Rule: {rule}, Confidence: {confidence}")
+
+Aprior
+
+mapper 
+
+#!/usr/bin/env python3
+
+import sys
+from itertools import combinations
+
+# Read input
+for line in sys.stdin:
+    items = line.strip().split()
+    # Generate pairs
+    pairs = combinations(items, 2)
+    # Output pairs with count of 1
+    for pair in pairs:
+        print(f"{' '.join(pair)}\t1")
+
+
+reducer
+
+#!/usr/bin/env python3
+
+import sys
+
+confidence_threshold = 0.3
+interest_threshold = 0.03  # Adjust this threshold as needed
+
+# Initialize itemset count dictionary
+itemset_support = {}
+itemset_counts = {}
+
+# Read input and aggregate counts
+for line in sys.stdin:
+    rule, count = line.strip().split('\t')
+    itemset_counts[rule] = itemset_counts.get(rule, 0) + int(count)
+
+    # Extract individual itemsets from the rule
+    items = rule.split()
+    antecedent = frozenset([items[0]])
+    consequent = frozenset([items[1]])
+
+    # Update support counts for individual itemsets
+    itemset_support[antecedent] = itemset_support.get(antecedent, 0) + int(count)
+    itemset_support[consequent] = itemset_support.get(consequent, 0) + int(count)
+    # Update support counts for the union of antecedent and consequent
+    union_support = itemset_support.get(antecedent.union(consequent), 0)
+    itemset_support[antecedent.union(consequent)] = union_support + int(count)
+
+ 
+
+# Compute and output confidence and interest scores
+for rule, count in itemset_counts.items():
+    antecedent, consequent = rule.split()
+    antecedent = frozenset([antecedent])
+    consequent = frozenset([consequent])
+
+    # Compute confidence score
+    confidence = count / itemset_support[antecedent]
+
+    # Compute interest score
+    if itemset_support[antecedent] != 0 and itemset_support[consequent] != 0:
+        interest = itemset_support[antecedent.union(consequent)] / (itemset_support[antecedent] * itemset_support[consequent])
+    else:
+        interest = 0
+
+   
+
+    # Check if confidence and interest scores meet their respective thresholds
+    if confidence >= confidence_threshold and interest >= interest_threshold:
+        # Output the rule, its confidence score, and its interest score
+        print(f"Rule: {rule}, Confidence: {confidence}, Interest: {interest}")
+
+Frequency
+
+Mapper
+
+
+Import sys
+
+For line in sys.stdin:
+Line=line.strip()
+Words=line.split()
+
+For word in words:
+Print(f'{word}\t{1}')
+
+
+Reducer
+
+From operator Import itemgetter
+Import sys
+
+Current_word = None
+Current_count = 0
+Word = None
+
+For line in sys.stdin:
+Line=line.strip()
+Word, count = line.split( '\t', 1 )
+
+Try:
+Count = count(count)
+Except ValueError:
+Continue
+
+If current_word == word:
+Count_count += count
+Else:
+If current_word:
+print(f'{current_word}\t{current_count}')
+Current_count = count
+Current_word = word
+
+If current_word == word:
+print(f'{current_word}\t{current_count}')
